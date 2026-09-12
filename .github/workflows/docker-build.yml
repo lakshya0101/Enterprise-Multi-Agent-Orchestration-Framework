@@ -1,0 +1,33 @@
+name: Zero-Cost CI Container Build Validation
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  validate-container-build:
+    name: Build & Validate Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: enterprise-orchestrator:test
+          load: true
+
+      - name: Verify Image and Runtime Smoke Test
+        run: |
+          docker run --rm enterprise-orchestrator:test uvicorn --version
+          docker run --rm enterprise-orchestrator:test python -c "import enterprise_orchestrator; print('Package imported successfully')"

@@ -1,0 +1,65 @@
+# ==============================================================================
+# Enterprise Multi-Agent Orchestration Framework - Local Deployment Stack
+# ==============================================================================
+
+networks:
+  orchestrator_net:
+    driver: bridge
+
+volumes:
+  pgdata:
+    driver: local
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: orchestrator-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-orchestrator}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in environment or .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - orchestrator_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orchestrator-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - API_AUTH_ENABLED=${API_AUTH_ENABLED:-false}
+      - STATE_STORE_TYPE=postgres
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-orchestrator}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in environment or .env}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - PROMETHEUS_METRICS_ENABLED=${PROMETHEUS_METRICS_ENABLED:-true}
+      - PROMETHEUS_METRICS_REQUIRE_AUTH=${PROMETHEUS_METRICS_REQUIRE_AUTH:-false}
+      - OTEL_ENABLED=${OTEL_ENABLED:-false}
+    networks:
+      - orchestrator_net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
