@@ -254,6 +254,25 @@ class FrameworkSettings(BaseModel):
         ),
         description="Trusted reverse proxy IP list for X-Forwarded-For resolution",
     )
+    execution_backend: str = Field(
+        default_factory=lambda: os.getenv("EXECUTION_BACKEND", "local_async"),
+        description="Execution backend engine ('local_async')",
+    )
+    execution_max_concurrency: int = Field(
+        default_factory=lambda: int(os.getenv("EXECUTION_MAX_CONCURRENCY", "10")),
+        gt=0,
+        description="Maximum concurrent active workflow executions",
+    )
+    execution_max_queue_size: int = Field(
+        default_factory=lambda: int(os.getenv("EXECUTION_MAX_QUEUE_SIZE", "100")),
+        gt=0,
+        description="Maximum pending queued workflow submissions before backpressure rejection",
+    )
+    execution_shutdown_timeout_seconds: float = Field(
+        default_factory=lambda: float(os.getenv("EXECUTION_SHUTDOWN_TIMEOUT_SECONDS", "30.0")),
+        gt=0.0,
+        description="Maximum graceful shutdown timeout in seconds",
+    )
 
     def model_dump_safe(self) -> dict:
         """Dump settings with all sensitive keys redacted."""

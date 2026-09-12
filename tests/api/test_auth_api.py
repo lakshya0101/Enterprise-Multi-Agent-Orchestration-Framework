@@ -1,5 +1,6 @@
 """Comprehensive offline API authentication and RBAC integration tests."""
 
+import asyncio
 import hashlib
 from typing import Dict
 from unittest.mock import AsyncMock
@@ -17,6 +18,7 @@ from enterprise_orchestrator.core.human import HumanEscalationRequest
 from enterprise_orchestrator.core.state import OrchestrationState
 from enterprise_orchestrator.core.types import ExecutionStatus, HumanRequestStatus
 from enterprise_orchestrator.errors.exceptions import ConfigurationError
+from enterprise_orchestrator.execution.models import ExecutionJob
 from enterprise_orchestrator.security.authenticators import HashedAPIKeyAuthenticator
 from enterprise_orchestrator.services.orchestration_service import OrchestrationService
 
@@ -60,6 +62,15 @@ def secure_app(auth_keys):
     run_id = sample_state.run_id
     service.create_and_run.return_value = sample_state
     service.get_state.return_value = sample_state
+
+    sample_job = ExecutionJob(job_id="sec-job-1", run_id=run_id, request="Test secure run")
+
+    async def _mock_submit(*args, **kwargs):
+        fut = asyncio.get_running_loop().create_future()
+        fut.set_result(sample_state)
+        return sample_job, fut
+
+    service.submit_run.side_effect = _mock_submit
 
     pending_req = HumanEscalationRequest(
         request_id="req-sec-999",

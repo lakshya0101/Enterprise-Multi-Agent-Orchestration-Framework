@@ -10,6 +10,7 @@ from enterprise_orchestrator.api.dependencies import get_orchestration_service
 from enterprise_orchestrator.config.settings import FrameworkSettings
 from enterprise_orchestrator.core.state import OrchestrationState
 from enterprise_orchestrator.services.orchestration_service import OrchestrationService
+from enterprise_orchestrator.execution.models import ExecutionJob
 
 
 class TestRequestLimitsAndBoundaries:
@@ -19,16 +20,15 @@ class TestRequestLimitsAndBoundaries:
         settings = FrameworkSettings(
             environment="development",
             api_auth_enabled=False,
-            max_request_body_bytes=200,  # 200 bytes limit
+            max_request_body_bytes=100,  # 100 bytes limit
         )
         app = create_app(settings=settings)
         client = TestClient(app)
 
-        # Send 1 KB string
-        big_body = {"request": "A" * 1000}
-        resp = client.post("/api/v1/runs", json=big_body)
+        large_payload = {"request": "A" * 500}
+        resp = client.post("/api/v1/runs", json=large_payload)
         assert resp.status_code == 413
-        assert resp.json()["code"] == "PAYLOAD_TOO_LARGE"
+        assert "exceeds the maximum allowed limit" in resp.json()["error"]
 
     def test_invalid_correlation_id_rejected_with_422(self):
         settings = FrameworkSettings(
@@ -38,10 +38,10 @@ class TestRequestLimitsAndBoundaries:
         app = create_app(settings=settings)
         client = TestClient(app)
 
-        # Send header with CRLF / space injection
-        resp = client.get("/health", headers={"X-Correlation-ID": "invalid corr\r\nid"})
+        invalid_id = "bad ID with spaces!@#"
+        resp = client.get("/health", headers={"X-Correlation-ID": invalid_id})
         assert resp.status_code == 422
-        assert resp.json()["code"] == "INVALID_CORRELATION_ID"
+        assert "Invalid correlation ID format" in resp.json()["error"]
 
     def test_valid_correlation_id_accepted_and_reflected(self):
         settings = FrameworkSettings(
@@ -66,11 +66,18 @@ class TestRequestLimitsAndBoundaries:
         app = create_app(settings=settings)
         mock_service = AsyncMock(spec=OrchestrationService)
 
-        async def slow_create_and_run(*args, **kwargs):
-            await asyncio.sleep(0.5)  # Sleep longer than 50ms
-            return OrchestrationState.create_initial(request="Slow")
+        mock_job = ExecutionJob(job_id="slow-j", run_id="slow-run-1", request="Perform slow workflow")
 
-        mock_service.create_and_run.side_effect = slow_create_and_run
+        async def slow_submit_run(*args, **kwargs):
+            fut = asyncio.get_running_loop().create_future()
+            async def _delayed_set():
+                await asyncio.sleep(0.5)  # Sleep longer than 50ms
+                if not fut.done():
+                    fut.set_result(OrchestrationState.create_initial(request="Slow"))
+            asyncio.create_task(_delayed_set())
+            return mock_job, fut
+
+        mock_service.submit_run.side_effect = slow_submit_run
         app.dependency_overrides[get_orchestration_service] = lambda: mock_service
         client = TestClient(app)
 

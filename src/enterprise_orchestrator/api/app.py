@@ -32,12 +32,20 @@ from enterprise_orchestrator.errors.exceptions import (
 )
 
 
+from enterprise_orchestrator.execution.idempotency import IdempotencyConflictError
+
+
 @asynccontextmanager
 async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan context manager for application initialization and clean teardown."""
-    # Startup: ensure configuration is accessible without triggering heavy model downloads
+    # Startup: ensure configuration is accessible and execution backend starts if present
+    service = getattr(app.state, "orchestration_service", None)
+    if service and hasattr(service, "execution_backend"):
+        await service.execution_backend.start()
     yield
-    # Shutdown: clean up any shared background resources
+    # Shutdown: clean up and drain worker tasks
+    if service and hasattr(service, "execution_backend"):
+        await service.execution_backend.shutdown(timeout_seconds=30.0)
 
 
 def create_app(settings: Optional[FrameworkSettings] = None) -> FastAPI:
@@ -131,6 +139,19 @@ def create_app(settings: Optional[FrameworkSettings] = None) -> FastAPI:
         )
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
+            content=error_resp.model_dump(),
+        )
+
+    @app.exception_handler(IdempotencyConflictError)
+    async def idempotency_conflict_handler(
+        request: Request, exc: IdempotencyConflictError
+    ) -> JSONResponse:
+        error_resp = ErrorResponse(
+            error=exc.message,
+            code=exc.code,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
             content=error_resp.model_dump(),
         )
 

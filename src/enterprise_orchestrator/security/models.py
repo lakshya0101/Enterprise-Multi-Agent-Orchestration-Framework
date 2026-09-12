@@ -21,6 +21,7 @@ class Permission(str, Enum):
     # Workflow operations
     RUNS_CREATE = "runs:create"
     RUNS_READ = "runs:read"
+    RUNS_CANCEL = "runs:cancel"
     RUNS_DELETE = "runs:delete"
     RUNS_STREAM = "runs:stream"
 
@@ -39,6 +40,7 @@ ROLE_PERMISSIONS: Dict[Role, Set[Permission]] = {
     Role.ADMIN: {
         Permission.RUNS_CREATE,
         Permission.RUNS_READ,
+        Permission.RUNS_CANCEL,
         Permission.RUNS_DELETE,
         Permission.RUNS_STREAM,
         Permission.HITL_READ,
@@ -51,6 +53,7 @@ ROLE_PERMISSIONS: Dict[Role, Set[Permission]] = {
     Role.OPERATOR: {
         Permission.RUNS_CREATE,
         Permission.RUNS_READ,
+        Permission.RUNS_CANCEL,
         Permission.RUNS_STREAM,
         Permission.HITL_READ,
         Permission.HITL_APPROVE,

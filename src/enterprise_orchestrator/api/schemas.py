@@ -44,6 +44,11 @@ class CreateRunRequest(BaseModel):
         pattern=r"^[a-zA-Z0-9_\-\.:]+$",
         description="Optional user or chat session ID",
     )
+    idempotency_key: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Optional client idempotency key for deduplication",
+    )
     custom_context: Optional[Dict[str, Any]] = Field(default=None, description="Additional contextual parameters")
 
     @field_validator("custom_context")

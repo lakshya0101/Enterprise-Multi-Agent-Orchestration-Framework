@@ -80,11 +80,39 @@ def get_runtime(
     )
 
 
+def get_execution_backend(
+    runtime: OrchestrationRuntime = Depends(get_runtime),
+    state_store: BaseStateStore = Depends(get_state_store),
+    metrics: MetricsRegistry = Depends(get_metrics_registry),
+    tracer: BaseTracer = Depends(get_tracer),
+    audit_sink: BaseAuditSink = Depends(get_audit_sink),
+    settings: FrameworkSettings = Depends(get_settings),
+) -> "BaseExecutionBackend":
+    """Provide configured execution backend instance."""
+    from enterprise_orchestrator.execution.local_async import LocalAsyncExecutionBackend
+
+    return LocalAsyncExecutionBackend(
+        runtime=runtime,
+        state_store=state_store,
+        metrics=metrics,
+        tracer=tracer,
+        audit_sink=audit_sink,
+        max_concurrency=settings.execution_max_concurrency,
+        max_queue_size=settings.execution_max_queue_size,
+    )
+
+
 def get_orchestration_service(
     runtime: OrchestrationRuntime = Depends(get_runtime),
+    execution_backend: "BaseExecutionBackend" = Depends(get_execution_backend),
+    settings: FrameworkSettings = Depends(get_settings),
 ) -> OrchestrationService:
     """Provide OrchestrationService for coordinating API requests."""
-    return OrchestrationService(runtime=runtime)
+    return OrchestrationService(
+        runtime=runtime,
+        execution_backend=execution_backend,
+        max_subscribers_per_run=settings.max_sse_subscribers_per_run,
+    )
 
 
 def get_authenticator(

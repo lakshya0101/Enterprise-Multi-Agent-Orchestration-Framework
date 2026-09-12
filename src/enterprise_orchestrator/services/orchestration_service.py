@@ -1,13 +1,17 @@
-"""Application service mediating between FastAPI transport endpoints and OrchestrationRuntime."""
+"""Application service mediating between FastAPI transport endpoints and execution boundary."""
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+import uuid
 
 from enterprise_orchestrator.core.human import HumanDecision, HumanEscalationRequest
 from enterprise_orchestrator.core.state import OrchestrationState
 from enterprise_orchestrator.core.types import ExecutionStatus
 from enterprise_orchestrator.errors.exceptions import OrchestrationError
+from enterprise_orchestrator.execution.base import BaseExecutionBackend
+from enterprise_orchestrator.execution.local_async import LocalAsyncExecutionBackend
+from enterprise_orchestrator.execution.models import ExecutionJob
 from enterprise_orchestrator.memory.base import BaseStateStore, Checkpoint
 from enterprise_orchestrator.orchestration.runtime import OrchestrationRuntime
 
@@ -21,6 +25,7 @@ class OrchestrationService:
         "human_decision_submitted",
         "run_completed",
         "run_failed",
+        "run_cancelled",
         "stream_closed",
     }
 
@@ -28,6 +33,7 @@ class OrchestrationService:
         self,
         runtime: OrchestrationRuntime,
         state_store: Optional[BaseStateStore] = None,
+        execution_backend: Optional[BaseExecutionBackend] = None,
         max_subscribers_per_run: int = 10,
     ) -> None:
         self.runtime = runtime
@@ -35,6 +41,14 @@ class OrchestrationService:
         self.max_subscribers_per_run = max_subscribers_per_run
         # In-memory pub-sub channels per run_id: run_id -> List[asyncio.Queue]
         self._event_queues: Dict[str, List[asyncio.Queue]] = {}
+
+        self.execution_backend: BaseExecutionBackend = execution_backend or LocalAsyncExecutionBackend(
+            runtime=runtime,
+            state_store=self.state_store,
+            max_concurrency=10,
+            max_queue_size=100,
+            event_publisher=self._publish_event,
+        )
 
     def _publish_event(self, run_id: str, event_type: str, data: Dict[str, Any]) -> None:
         """Broadcast an event payload to active subscribers with critical event retention under backpressure."""
@@ -64,58 +78,69 @@ class OrchestrationService:
                 except asyncio.QueueFull:
                     pass
 
+    async def submit_run(
+        self,
+        request: str,
+        correlation_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        custom_context: Optional[Dict[str, Any]] = None,
+        idempotency_key: Optional[str] = None,
+        subject_id: Optional[str] = None,
+    ) -> Tuple[ExecutionJob, asyncio.Future]:
+        """Submit a run to the execution backend."""
+        if isinstance(self.execution_backend, LocalAsyncExecutionBackend) and not self.execution_backend._is_started:
+            await self.execution_backend.start()
+
+        run_id = str(uuid.uuid4())
+        return await self.execution_backend.submit_run(
+            run_id=run_id,
+            request=request,
+            correlation_id=correlation_id,
+            session_id=session_id,
+            custom_context=custom_context,
+            idempotency_key=idempotency_key,
+            subject_id=subject_id,
+        )
+
     async def create_and_run(
         self,
         request: str,
         correlation_id: Optional[str] = None,
         session_id: Optional[str] = None,
         custom_context: Optional[Dict[str, Any]] = None,
+        idempotency_key: Optional[str] = None,
+        subject_id: Optional[str] = None,
     ) -> OrchestrationState:
-        """Start a new workflow run and execute it through the orchestration runtime."""
-        initial_state = OrchestrationState.create_initial(
+        """Start a new workflow run and await its execution through the execution backend."""
+        job, future = await self.submit_run(
             request=request,
             correlation_id=correlation_id,
             session_id=session_id,
             custom_context=custom_context,
+            idempotency_key=idempotency_key,
+            subject_id=subject_id,
         )
-        run_id = initial_state.run_id
+        return await future
 
-        self._publish_event(run_id, "run_started", {"request": request, "status": "running"})
+    async def submit_human_decision(
+        self,
+        run_id: str,
+        decision: HumanDecision,
+    ) -> OrchestrationState:
+        """Apply a submitted human decision and resume paused workflow through the execution backend."""
+        if isinstance(self.execution_backend, LocalAsyncExecutionBackend) and not self.execution_backend._is_started:
+            await self.execution_backend.start()
 
-        try:
-            # We invoke runtime directly with request parameters
-            final_state = await self.runtime.run(
-                request=request,
-                correlation_id=correlation_id,
-                session_id=session_id,
-                custom_context=custom_context,
-            )
+        job, future = await self.execution_backend.submit_resume(run_id=run_id, decision=decision)
+        return await future
 
-            # Publish appropriate completion or pause event
-            if final_state.metadata.status == ExecutionStatus.PAUSED_FOR_HUMAN:
-                self._publish_event(
-                    final_state.run_id,
-                    "human_review_required",
-                    {"reason": final_state.human_requests[-1].reason if final_state.human_requests else ""},
-                )
-            elif final_state.metadata.status == ExecutionStatus.COMPLETED:
-                self._publish_event(
-                    final_state.run_id,
-                    "run_completed",
-                    {"response": final_state.final_response},
-                )
-            elif final_state.metadata.status == ExecutionStatus.FAILED:
-                self._publish_event(
-                    final_state.run_id,
-                    "run_failed",
-                    {"errors": final_state.errors},
-                )
+    async def cancel_run(self, run_id: str, reason: str = "User cancelled") -> bool:
+        """Cancel an active, queued, or paused run via the execution backend."""
+        return await self.execution_backend.cancel_run(run_id=run_id, reason=reason)
 
-            return final_state
-
-        except Exception as e:
-            self._publish_event(run_id, "run_failed", {"error": str(e)})
-            raise
+    async def get_job_status(self, run_id: str) -> Optional[ExecutionJob]:
+        """Fetch live execution backend job metadata if present."""
+        return await self.execution_backend.get_job(run_id)
 
     async def get_state(self, run_id: str) -> Optional[OrchestrationState]:
         """Fetch latest persisted OrchestrationState."""
@@ -133,63 +158,6 @@ class OrchestrationService:
         if state.requires_human and state.human_requests:
             return state.human_requests[-1]
         return None
-
-    async def submit_human_decision(
-        self,
-        run_id: str,
-        decision: HumanDecision,
-    ) -> OrchestrationState:
-        """Apply a submitted human decision and resume paused workflow."""
-        state = await self.get_state(run_id)
-        if not state:
-            raise OrchestrationError(
-                message=f"Run '{run_id}' not found.",
-                code="RUN_NOT_FOUND",
-                retryable=False,
-            )
-
-        if not state.requires_human:
-            raise OrchestrationError(
-                message=f"Run '{run_id}' is not awaiting human review (status: {state.metadata.status.value}).",
-                code="NO_HUMAN_REVIEW_PENDING",
-                retryable=False,
-            )
-
-        if state.metadata.status in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED):
-            raise OrchestrationError(
-                message=f"Run '{run_id}' is in terminal status '{state.metadata.status.value}' and cannot be resumed.",
-                code="RUN_TERMINAL",
-                retryable=False,
-            )
-
-        self._publish_event(
-            run_id,
-            "human_decision_submitted",
-            {"status": decision.status.value, "decision_note": decision.decision_note},
-        )
-
-        final_state = await self.runtime.resume_with_human_decision(state, decision)
-
-        if final_state.metadata.status == ExecutionStatus.COMPLETED:
-            self._publish_event(
-                final_state.run_id,
-                "run_completed",
-                {"response": final_state.final_response},
-            )
-        elif final_state.metadata.status == ExecutionStatus.FAILED:
-            self._publish_event(
-                final_state.run_id,
-                "run_failed",
-                {"errors": final_state.errors},
-            )
-        elif final_state.metadata.status == ExecutionStatus.PAUSED_FOR_HUMAN:
-            self._publish_event(
-                final_state.run_id,
-                "human_review_required",
-                {"reason": final_state.human_requests[-1].reason if final_state.human_requests else ""},
-            )
-
-        return final_state
 
     async def subscribe_events(
         self,
@@ -237,7 +205,7 @@ class OrchestrationService:
             }
 
             # If already terminal, close stream
-            if state.metadata.status in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED):
+            if state.metadata.status in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED):
                 yield {
                     "event": "stream_closed",
                     "run_id": run_id,
@@ -249,7 +217,7 @@ class OrchestrationService:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=2.0)
                     yield event
-                    if event.get("event") in ("run_completed", "run_failed"):
+                    if event.get("event") in ("run_completed", "run_failed", "run_cancelled"):
                         break
                 except asyncio.TimeoutError:
                     # Check if state transitioned to terminal state
@@ -257,6 +225,7 @@ class OrchestrationService:
                     if current_state and current_state.metadata.status in (
                         ExecutionStatus.COMPLETED,
                         ExecutionStatus.FAILED,
+                        ExecutionStatus.CANCELLED,
                     ):
                         break
         finally:
