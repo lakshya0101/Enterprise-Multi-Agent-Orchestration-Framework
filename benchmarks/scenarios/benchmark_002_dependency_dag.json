@@ -1,0 +1,9 @@
+{
+  "benchmark_id": "benchmark_002_dependency_dag",
+  "name": "Multi-Step Sequential DAG Execution",
+  "description": "Validates 3-step sequential DAG execution with topological dependency ordering.",
+  "request": "Analyze financial records and summarize insights.",
+  "expected_status": "completed",
+  "expected_tasks_count": 3,
+  "min_required_score": 0.85
+}

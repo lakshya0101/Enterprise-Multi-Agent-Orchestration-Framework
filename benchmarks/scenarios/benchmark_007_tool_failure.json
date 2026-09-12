@@ -1,0 +1,9 @@
+{
+  "benchmark_id": "benchmark_007_tool_failure",
+  "name": "Tool Execution Failure Handling",
+  "description": "Validates retry and failure capture when tool execution encounters errors.",
+  "request": "Execute faulty external script.",
+  "expected_status": "failed",
+  "expected_tasks_count": 1,
+  "min_required_score": 0.75
+}

@@ -1,0 +1,10 @@
+{
+  "benchmark_id": "benchmark_001_simple_rag",
+  "name": "Single-Step Semantic Retrieval",
+  "description": "Validates single retrieval query execution and Hit@1 document extraction.",
+  "request": "Retrieve the enterprise vacation policy.",
+  "expected_status": "completed",
+  "expected_tasks_count": 1,
+  "expected_ground_truth_doc_ids": ["doc_policy_001"],
+  "min_required_score": 0.85
+}

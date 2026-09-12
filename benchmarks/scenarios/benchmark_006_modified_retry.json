@@ -1,0 +1,9 @@
+{
+  "benchmark_id": "benchmark_006_modified_retry",
+  "name": "Human-in-the-Loop Modification and Re-execution",
+  "description": "Validates state modification by reviewer followed by task re-execution and success.",
+  "request": "Deploy configuration with altered parameters.",
+  "expected_status": "completed",
+  "expected_hitl_decision": "modify",
+  "min_required_score": 0.85
+}

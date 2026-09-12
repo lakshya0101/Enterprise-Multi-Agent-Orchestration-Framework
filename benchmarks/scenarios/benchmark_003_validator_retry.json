@@ -1,0 +1,9 @@
+{
+  "benchmark_id": "benchmark_003_validator_retry",
+  "name": "Critic Rejection and Bounded Retry Loop",
+  "description": "Validates retry loop triggered by critic rejection followed by eventual successful completion.",
+  "request": "Process data with strict schema validation.",
+  "expected_status": "completed",
+  "expected_tasks_count": 1,
+  "min_required_score": 0.80
+}

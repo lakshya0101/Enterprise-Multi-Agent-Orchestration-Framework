@@ -1,0 +1,9 @@
+{
+  "benchmark_id": "benchmark_004_hitl_approval",
+  "name": "Human-in-the-Loop Escalation and Approval",
+  "description": "Validates state pausing upon human escalation and resumption following human approval.",
+  "request": "Transfer funds to vendor account.",
+  "expected_status": "completed",
+  "expected_hitl_decision": "approve",
+  "min_required_score": 0.85
+}
