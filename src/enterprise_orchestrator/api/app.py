@@ -35,6 +35,12 @@ from enterprise_orchestrator.errors.exceptions import (
 from enterprise_orchestrator.execution.idempotency import IdempotencyConflictError
 
 
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan context manager for application initialization and clean teardown."""
@@ -46,6 +52,31 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown: clean up and drain worker tasks
     if service and hasattr(service, "execution_backend"):
         await service.execution_backend.shutdown(timeout_seconds=30.0)
+
+    # Telemetry shutdown: offload synchronous tracer flush with strict timeout deadline
+    tracer = getattr(app.state, "tracer", None)
+    if tracer is None:
+        try:
+            from enterprise_orchestrator.api.dependencies import get_settings, get_tracer
+            cfg = get_settings()
+            if cfg.otel_enabled:
+                tracer = get_tracer(cfg)
+        except Exception:
+            tracer = None
+
+    if tracer and hasattr(tracer, "shutdown"):
+        try:
+            from enterprise_orchestrator.api.dependencies import get_settings
+            cfg = get_settings()
+            timeout = getattr(cfg, "otel_exporter_timeout_seconds", 5.0)
+            await asyncio.wait_for(
+                asyncio.to_thread(tracer.shutdown),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("OpenTelemetry tracer shutdown timed out; continuing application shutdown.")
+        except Exception as exc:
+            logger.warning("OpenTelemetry tracer shutdown error: %s; continuing application shutdown.", exc)
 
 
 def create_app(settings: Optional[FrameworkSettings] = None) -> FastAPI:

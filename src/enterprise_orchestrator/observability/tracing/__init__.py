@@ -8,6 +8,9 @@ from enterprise_orchestrator.observability.tracing.context import (
 )
 from enterprise_orchestrator.observability.tracing.in_memory import InMemoryTracer
 from enterprise_orchestrator.observability.tracing.models import Span, SpanKind, SpanStatus
+from enterprise_orchestrator.observability.tracing.opentelemetry_adapter import (
+    OpenTelemetryTracer,
+)
 
 __all__ = [
     "Span",
@@ -18,4 +21,5 @@ __all__ = [
     "set_current_trace_context",
     "BaseTracer",
     "InMemoryTracer",
+    "OpenTelemetryTracer",
 ]

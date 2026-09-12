@@ -45,8 +45,28 @@ def get_metrics_registry() -> MetricsRegistry:
     return get_global_metrics()
 
 
-def get_tracer() -> BaseTracer:
-    """Provide global tracer."""
+def get_tracer(settings: FrameworkSettings = Depends(get_settings)) -> BaseTracer:
+    """Provide configured tracer with optional OpenTelemetry adapter support."""
+    if settings.otel_enabled:
+        from enterprise_orchestrator.observability.tracing.opentelemetry_adapter import (
+            OpenTelemetryTracer,
+        )
+
+        headers_dict = None
+        if settings.otel_exporter_otlp_headers:
+            try:
+                import json
+                headers_dict = json.loads(settings.otel_exporter_otlp_headers)
+            except Exception:
+                headers_dict = {}
+
+        return OpenTelemetryTracer(
+            service_name=settings.otel_service_name,
+            otlp_endpoint=settings.otel_exporter_otlp_endpoint,
+            otlp_headers=headers_dict,
+            timeout_seconds=settings.otel_exporter_timeout_seconds,
+            enabled=True,
+        )
     return _GLOBAL_TRACER
 
 

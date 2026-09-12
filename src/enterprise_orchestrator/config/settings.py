@@ -273,6 +273,42 @@ class FrameworkSettings(BaseModel):
         gt=0.0,
         description="Maximum graceful shutdown timeout in seconds",
     )
+    prometheus_metrics_enabled: bool = Field(
+        default_factory=lambda: os.getenv("PROMETHEUS_METRICS_ENABLED", "true").lower() in ("true", "1", "yes"),
+        description="Enable the /metrics Prometheus text exposition endpoint",
+    )
+    prometheus_metrics_path: str = Field(
+        default_factory=lambda: os.getenv("PROMETHEUS_METRICS_PATH", "/metrics"),
+        description="Path for Prometheus scraping endpoint",
+    )
+    prometheus_metrics_require_auth: bool = Field(
+        default_factory=lambda: (
+            os.getenv("PROMETHEUS_METRICS_REQUIRE_AUTH", "true" if os.getenv("ENVIRONMENT") == "production" else "false")
+            .lower() in ("true", "1", "yes")
+        ),
+        description="Enforce Track B authentication on Prometheus /metrics endpoint",
+    )
+    otel_enabled: bool = Field(
+        default_factory=lambda: os.getenv("OTEL_ENABLED", "false").lower() in ("true", "1", "yes"),
+        description="Enable OpenTelemetry tracing adapter and exporter",
+    )
+    otel_service_name: str = Field(
+        default_factory=lambda: os.getenv("OTEL_SERVICE_NAME", "enterprise-orchestrator"),
+        description="Service name reported to OpenTelemetry collector",
+    )
+    otel_exporter_otlp_endpoint: Optional[str] = Field(
+        default_factory=lambda: os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+        description="OTLP collector endpoint URL",
+    )
+    otel_exporter_otlp_headers: Optional[str] = Field(
+        default_factory=lambda: os.getenv("OTEL_EXPORTER_OTLP_HEADERS"),
+        description="Custom headers for OTLP export",
+    )
+    otel_exporter_timeout_seconds: float = Field(
+        default_factory=lambda: float(os.getenv("OTEL_EXPORTER_TIMEOUT_SECONDS", "5.0")),
+        gt=0.0,
+        description="Maximum timeout in seconds for OTel export and shutdown flush",
+    )
 
     def model_dump_safe(self) -> dict:
         """Dump settings with all sensitive keys redacted."""
@@ -283,6 +319,7 @@ class FrameworkSettings(BaseModel):
             "langchain_api_key",
             "postgres_password",
             "jwt_secret_key",
+            "otel_exporter_otlp_headers",
         }
         for key in sensitive_keys:
             if key in data and data[key]:

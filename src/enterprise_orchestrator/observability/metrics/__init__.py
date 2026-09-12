@@ -7,6 +7,9 @@ from enterprise_orchestrator.observability.metrics.models import (
     MetricSnapshot,
     MetricType,
 )
+from enterprise_orchestrator.observability.metrics.prometheus import (
+    PrometheusTextSerializer,
+)
 from enterprise_orchestrator.observability.metrics.registry import (
     MetricsRegistry,
     get_global_metrics,
@@ -20,4 +23,5 @@ __all__ = [
     "MetricSnapshot",
     "MetricsRegistry",
     "get_global_metrics",
+    "PrometheusTextSerializer",
 ]

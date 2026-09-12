@@ -1,23 +1,83 @@
 """Operational telemetry and metrics endpoints."""
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from enterprise_orchestrator.api.dependencies import (
+    get_authenticator,
     get_metrics_registry,
     get_orchestration_service,
+    get_settings,
     get_tracer,
 )
+from enterprise_orchestrator.config.settings import FrameworkSettings
 from enterprise_orchestrator.observability.metrics.models import MetricSnapshot
+from enterprise_orchestrator.observability.metrics.prometheus import (
+    PrometheusTextSerializer,
+)
 from enterprise_orchestrator.observability.metrics.registry import MetricsRegistry
 from enterprise_orchestrator.observability.tracing.base import BaseTracer
 from enterprise_orchestrator.security.authorizers import require_permission
 from enterprise_orchestrator.security.models import AuthenticatedIdentity, Permission
-from enterprise_orchestrator.security.rate_limiter import require_rate_limit
+from enterprise_orchestrator.security.rate_limiter import get_rate_limiter, require_rate_limit
 from enterprise_orchestrator.services.orchestration_service import OrchestrationService
 
 router = APIRouter(tags=["Metrics & Telemetry"])
+_PROMETHEUS_SERIALIZER = PrometheusTextSerializer()
+
+
+async def verify_prometheus_access(
+    request: Request,
+    settings: FrameworkSettings = Depends(get_settings),
+    authenticator: Any = Depends(get_authenticator),
+) -> Optional[AuthenticatedIdentity]:
+    """Verify access policy for Prometheus scrape endpoint."""
+    if not settings.prometheus_metrics_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prometheus metrics endpoint is disabled.",
+        )
+
+    if settings.prometheus_metrics_require_auth:
+        identity = await authenticator.authenticate(request)
+        if not identity.has_permission(Permission.METRICS_READ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Principal lacks required permission: metrics:read",
+            )
+
+        if settings.rate_limit_enabled:
+            rate_limiter = get_rate_limiter()
+            limit = settings.rate_limit_authenticated_per_minute
+            is_allowed, _, retry_after = await rate_limiter.check_rate_limit(
+                key=f"sub:{identity.subject_id}",
+                max_requests=limit,
+                window_seconds=60,
+            )
+            if not is_allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Rate limit exceeded. Try again in {retry_after} seconds.",
+                    headers={"Retry-After": str(int(retry_after) or 1)},
+                )
+        return identity
+
+    return None
+
+
+@router.get("/metrics")
+async def get_prometheus_metrics(
+    request: Request,
+    registry: MetricsRegistry = Depends(get_metrics_registry),
+    _auth: Optional[AuthenticatedIdentity] = Depends(verify_prometheus_access),
+) -> Response:
+    """Export operational metrics in standard Prometheus text exposition format."""
+    content = _PROMETHEUS_SERIALIZER.serialize_registry(registry)
+    return Response(
+        content=content,
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @router.get("/api/v1/metrics", response_model=MetricSnapshot)
